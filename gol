@@ -1,0 +1,244 @@
+#!/bin/bash
+
+set +x
+
+# system values
+BASENAME="/usr/bin/basename"
+ECHO="/bin/echo"
+SLEEP="/bin/sleep"
+TPUT="/usr/bin/tput"
+GREP="/bin/grep"
+WC="/usr/bin/wc"
+CAT="/bin/cat"
+XXD="/usr/bin/xxd"
+
+# colors
+nocolor="\033[0m"
+red="\033[10;31m"
+green="\033[0;32m"
+white="\033[1;37m"
+
+if [ "${#}" != "4" -a "${#}" != "5" ]; then
+  ${ECHO} "USAGE:    ./$(${BASENAME} ${0}) FIELDWIDTH FIELDHEIGHT RULESALIVE RULESDEAD [LINSTARTMATRIX]"
+  ${ECHO} "EXAMPLES: ./$(${BASENAME} ${0}) 50         50          \"2 3\"      \"3\""    
+  ${ECHO} "          ./$(${BASENAME} ${0}) 50         50          \"2 3\"      \"3\""    init.mtx
+  exit
+fi
+
+# field values 
+fwidth=${1}
+fheight=${2}
+# number of living neighbours for a living cell to stay alive in the next generation
+rulesalive=($(${ECHO} ${3}))
+# number of living neighbours for a dead cell to become alive in the next generation
+rulesdead=($(${ECHO} ${4}))
+cellalivemarker="o"
+celldeadmarker="."
+cellmarkerlen=1
+field=()
+fieldco=() # field storing cell marker offsets
+
+# if there are just marker values or spaces in the file it is a valid one
+isvalid=0
+if [ "${#cellalivemarker}" != "${cellmarkerlen}" -o "${#celldeadmarker}" != "${cellmarkerlen}" ]; then
+  ${ECHO} "E: Cell marker length differs from ${cellmarkerlen} (${#cellalivemarker},${#celldeadmarker}). Quitting."
+  exit 1
+fi
+if [ "${5}" != "" ]; then
+  ${GREP} -oq '[^\'${cellalivemarker}'\'${celldeadmarker}'\ ]' ${5}
+  isvalid="${?}"
+fi
+if [ "${5}" != "" ] && [ "${isvalid}" == "1" ]; then
+  # initialize array
+  field=($(${CAT} ${5}))
+  # and set color values
+  for((i=0; i<${fwidth}*${fheight}; i=$((${i}+1)))); do
+    if [ "x${field[${i}]}" == "x${cellalivemarker}" ]; then
+      cell="${green}${cellalivemarker}${nocolor}"
+      colhl=$(${ECHO} -e ${green} | ${XXD} -ps)
+    elif [ "x${field[${i}]}" == "x${celldeadmarker}" ]; then
+      cell="${nocolor}${celldeadmarker}${nocolor}"
+      colhl=$(${ECHO} -e ${nocolor} | ${XXD} -ps)
+    fi
+    fieldco[${#fieldco[@]}]=$(((${#colhl}-2)/2))
+    field[${i}]="$(${ECHO} -e ${cell})"
+  done
+  
+  # fill up with randoms if the length won't fit the dimension parameters
+  if [ "${#field[@]}" != "$((${fwidth}*${fheight}))" ]; then
+    ${ECHO} "I: Padding matrix with random values."
+    # fill up field with randoms if its too short
+    for((i=${#field[@]}; i<${fwidth}*${fheight}; i=$((${i}+1)))); do
+      alive=$((${RANDOM}%2))
+      if [ "x${alive}" == "x1" ]; then
+        cell="${nocolor}${celldeadmarker}${nocolor}"
+        colhl=$(${ECHO} -e ${nocolor} | ${XXD} -ps)
+      elif [ "x${alive}" == "x0" ]; then
+        cell="${green}${cellalivemarker}${nocolor}"
+        colhl=$(${ECHO} -e ${green} | ${XXD} -ps)
+      fi
+      fieldco[${#fieldco[@]}]=$(((${#colhl}-2)/2))
+      field[${#field[@]}]="${cell}"
+    done
+  fi
+else
+  # fill random field
+  for((i=0; i<${fwidth}*${fheight}; i=$((${i}+1)))); do
+
+    alive=$((${RANDOM}%2))
+    if [ "x${alive}" == "x1" ]; then
+      cell="$(${ECHO} -e ${nocolor}${celldeadmarker}${nocolor})"
+      colhl=$(${ECHO} -e ${nocolor} | ${XXD} -ps)
+    elif [ "x${alive}" == "x0" ]; then
+      cell="$(${ECHO} -e ${green}${cellalivemarker}${nocolor})"
+      colhl=$(${ECHO} -e ${green} | ${XXD} -ps)
+    fi
+    fieldco[${#fieldco[@]}]=$(((${#colhl}-2)/2))
+    field[${#field[@]}]="${cell}"
+  
+  done
+fi
+
+# evaluate rules and get the next state for the cell
+getnextstate() {
+  local i="${1}" # row
+  local j="${2}" # col
+ 
+  local neighbours="" 
+
+  # left upper
+  if [ "${i}" -eq "0" -a "${j}" -eq "0" ]; then
+    # three right neighbours
+    neighbours="${field[$(((${i}*${fwidth})+(${j}+1)))]} ${field[$((((${i}+1)*${fwidth})+${j}))]} ${field[$((((${i}+1)*${fwidth})+(${j}+1)))]}"
+
+  # right upper
+  elif [ "${i}" -eq "0" -a "${j}" -eq "$((${fwidth}-1))" ]; then
+    # three right neighbours
+    neighbours="${field[$(((${i}*${fwidth})+(${j}-1)))]} ${field[$((((${i}+1)*${fwidth})+(${j}-1)))]} ${field[$((((${i}+1)*${fwidth})+${j}))]}"
+
+  # left bottom
+  elif [ "${i}" -eq "$((${fheight}-1))" -a "${j}" -eq "0" ]; then
+    # three right neighbours
+    neighbours="${field[$((((${i}-1)*${fwidth})+${j}))]} ${field[$((((${i}-1)*${fwidth})+(${j}+1)))]} ${field[$(((${i}*${fwidth})+(${j}+1)))]}"
+
+  # right bottom
+  elif [ "${i}" -eq "$((${fheight}-1))" -a "${j}" -eq "$((${fwidth}-1))" ]; then
+    # three right neighbours
+    neighbours="${field[$((((${i}-1)*${fwidth})+(${j}-1)))]} ${field[$((((${i}-1)*${fwidth})+${j}))]} ${field[$(((${i}*${fwidth})+(${j}-1)))]}"
+
+  # upper
+  elif [ "${i}" -eq "0" -a "${j}" -gt "0" ]; then
+    # five neighbours bottom
+    neighbours="${field[$(((${i}*${fwidth})+(${j}-1)))]} ${field[$(((${i}*${fwidth})+(${j}+1)))]} ${field[$((((${i}+1)*${fwidth})+(${j}-1)))]} ${field[$((((${i}+1)*${fwidth})+${j}))]} ${field[$((((${i}+1)*${fwidth})+(${j}+1)))]}"
+
+  # bottom
+  elif [ "${i}" -eq "$((${fheight}-1))" -a "${j}" -gt "0" ]; then
+    # five neighbours bottom
+    neighbours="${field[$((((${i}-1)*${fwidth})+(${j}-1)))]} ${field[$((((${i}-1)*${fwidth})+${j}))]} ${field[$((((${i}-1)*${fwidth})+(${j}+1)))]} ${field[$(((${i}*${fwidth})+(${j}-1)))]} ${field[$(((${i}*${fwidth})+(${j}+1)))]}"
+
+  # right
+  elif [ "${i}" -gt "0" -a "${j}" -eq "0" ]; then
+    # five neighbours right
+    neighbours="${field[$((((${i}-1)*${fwidth})+${j}))]} ${field[$((((${i}-1)*${fwidth})+(${j}+1)))]} ${field[$(((${i}*${fwidth})+(${j}+1)))]} ${field[$((((${i}+1)*${fwidth})+${j}))]} ${field[$((((${i}+1)*${fwidth})+(${j}+1)))]}"
+
+  # left
+  elif [ "${i}" -gt "0" -a "${j}" -eq "$((${fwidth}-1))" ]; then
+    # five neighbours right
+    neighbours="${field[$((((${i}-1)*${fwidth})+(${j}-1)))]} ${field[$((((${i}-1)*${fwidth})+${j}))]} ${field[$(((${i}*${fwidth})+(${j}-1)))]} ${field[$((((${i}+1)*${fwidth})+(${j}-1)))]} ${field[$((((${i}+1)*${fwidth})+${j}))]}"
+
+  # center
+  else
+    # eight neighbours
+    neighbours="${field[$((((${i}-1)*${fwidth})+(${j}-1)))]} ${field[$((((${i}-1)*${fwidth})+${j}))]} ${field[$((((${i}-1)*${fwidth})+(${j}+1)))]} ${field[$(((${i}*${fwidth})+(${j}-1)))]} ${field[$(((${i}*${fwidth})+(${j}+1)))]} ${field[$((((${i}+1)*${fwidth})+(${j}-1)))]} ${field[$((((${i}+1)*${fwidth})+${j}))]} ${field[$((((${i}+1)*${fwidth})+(${j}+1)))]}"
+
+  fi
+
+  # count neighbours alive
+  ncnt=$(${ECHO} ${neighbours} | ${GREP} -o ${cellalivemarker} | ${WC} -l)
+
+  # evaluate rules
+  local next=""
+
+  # get color offset for marker value
+  co=${fieldco[$(((${i}*${fwidth})+${j}))]}
+  # extract marker value to evaluate rules
+  marker="$(${ECHO} -e "\x$(${XXD} -s ${co} -l ${cellmarkerlen} -p <<< ${field[$(((${i}*${fwidth})+${j}))]})")"
+
+  #${ECHO} ${ncnt}:${co}:${marker}:${cellalivemarker}:${celldeadmarker}
+
+  # if alive and number of neighbours matches alive-rule -> ha ha ha ha staying alive
+  if [ "${marker}" == "${cellalivemarker}" ] && [[ "$(${ECHO} ${rulesalive[@]})" =~ ${ncnt} ]]; then
+    next="$(${ECHO} -e ${green}${cellalivemarker}${nocolor})"
+    colhl=$(${ECHO} -e ${green} | ${XXD} -ps)
+
+  # if dead and number of neighbours matches dead-rule -> happy birthday
+  elif [ "${marker}" == "${celldeadmarker}" ] && [[ "$(${ECHO} ${rulesdead[@]})" =~ ${ncnt} ]]; then
+    next="$(${ECHO} -e ${green}${cellalivemarker}${nocolor})"
+    colhl=$(${ECHO} -e ${green} | ${XXD} -ps)
+  
+  # else die or stay dead -> fneral for a friend
+  else
+    if [ "${marker}" == "${cellalivemarker}" ]; then
+      next="$(${ECHO} -e ${red}${celldeadmarker}${nocolor})"
+      colhl=$(${ECHO} -e ${red} | ${XXD} -ps)
+
+    elif [ "${marker}" == "${celldeadmarker}" ]; then
+      next="$(${ECHO} -e ${nocolor}${celldeadmarker}${nocolor})"
+      colhl=$(${ECHO} -e ${nocolor} | ${XXD} -ps)
+    fi
+  fi
+
+  ${ECHO} ${next}
+  ${ECHO} -e "${i}${j}:${field[$(((${i}*${fwidth})+${j}))]}:${neighbours}:${ncnt},${next}|" >> gol.log
+
+  # does NOT work because getnextstate is executed in a subshell 
+  #fieldco[$(((${i}*${fwidth})+${j}))]=$(((${colhl}-2)/2))
+  # so the return value stores the updated col offset
+  return $(((${#colhl}-2)/2))
+
+}
+
+firstrun=1
+while [ true ]; do
+
+  # print lines
+  field_update=()
+
+  for((i=0; i<${fheight}; i=$((${i}+1)))); do
+    line=""
+
+    # calculate lines
+    for((j=0; j<${fwidth}; j=$((${j}+1)))); do
+
+      if [ "${firstrun}" == "1" ]; then
+        line="${line}${field[$(((${i}*${fwidth})+${j}))]} "
+
+      # start calculation just after the first print
+      elif [ "${firstrun}" == "0" ]; then
+        nstate="$(getnextstate ${i} ${j})"
+        colen="${?}"
+        line="${line}${nstate} "
+        fieldco[$(((${i}*${fwidth})+${j}))]=${colen}
+
+      fi
+
+    done
+
+    field_update=($(${ECHO} ${field_update[@]}) $(${ECHO} ${line}))
+    ${ECHO} -e ${line}
+    
+  done
+  field=($(${ECHO} -e ${field_update[@]}))
+ 
+  #${SLEEP} 0.2
+
+  # refresh lines in the field
+  for((i=0; i<${fheight}; i=$((${i}+1)))); do 
+    # refresh lines
+    ${TPUT} cuu1
+    ${TPUT} el
+  done
+
+  firstrun=0
+
+done
